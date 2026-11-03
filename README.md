@@ -67,6 +67,52 @@ Tested 2026-10-03 on fresh Ubuntu 26.04 LTS and Fedora 44 with Rust 1.98.0
    cargo build --release --locked   # -> target/release/opensidian
    ```
 
+## Building on Windows
+**Status: not supported. `cargo build` fails on Windows today.** opensidian is
+Linux-first, and the backend uses Linux/Unix APIs directly. This section records
+what was tried so nobody has to repeat it.
+
+Attempted 2026-11-03 on Windows 11 Pro (10.0.26200), `x86_64-pc-windows-msvc`:
+
+| Needed for a Tauri v2 Windows build | Found on the test machine |
+|---|---|
+| Rust (MSVC host toolchain) | rustc/cargo 1.99.1 (the Linux build pins 1.98.0) |
+| MSVC C++ build tools + Windows SDK | Visual Studio 2022 Community, MSVC 14.44, SDK 10.0.22621 / 10.0.26100 |
+| WebView2 runtime | Edge WebView2 Runtime 156 (preinstalled on Windows 11) |
+| Tauri CLI | `cargo-tauri` 2.11.4 (optional: `tauri.conf.json` has `bundle.active = false`, so plain `cargo build` is the path) |
+| Node / npm / pnpm | not needed; the frontend in `ui/` has no bundler |
+
+The toolchain was complete, so nothing had to be installed. The build still
+fails:
+
+```powershell
+cd src-tauri
+cargo build --release --locked
+```
+
+```
+error[E0425]: cannot find value `O_PATH` in crate `libc`
+error[E0425]: cannot find function `prctl` in crate `libc`
+error: could not compile `landlock` (lib) due to 10 previous errors
+```
+
+Cause: `landlock` (the optional self-sandbox, `src/sandbox.rs`) and `libc` are
+unconditional dependencies in `src-tauri/Cargo.toml`. Beyond that crate, 14
+files under `src-tauri/src/` use `libc`, `std::os::unix` or `/proc`
+(`vaultlock.rs` flock, `spawn.rs`, `spawner.rs`, `watcher.rs`, `cfgstore.rs`,
+`vaultfs.rs` and others), and the Linux-only `gdk`, `gdkx11`, `soup3` and
+`dbus` crates are already gated behind `cfg(target_os = "linux")`. There are no
+`cfg(windows)` branches anywhere. A Windows build would need, at least:
+
+- `landlock` and `libc` moved under `cfg(target_os = "linux")` (or `unix`);
+- Windows replacements for the per-vault flock, process spawning and
+  liveness probe, the `/proc` reads, and symlink-safe file opening;
+- Windows stand-ins for the Secret Service (`secrets.rs`) and the libsoup
+  HTTP client used by the plugin store.
+
+None of this is done, and no source file was changed. If you only want to run
+opensidian on Windows, use WSL2 with WSLg and follow "Build from source" above.
+
 ## Nix
 The repo ships a flake (Nix 2.4+). It pins nixpkgs unstable and builds with
 `--locked` against `src-tauri/Cargo.lock`, so the toolchain and every crate
