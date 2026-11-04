@@ -110,8 +110,32 @@ files under `src-tauri/src/` use `libc`, `std::os::unix` or `/proc`
 - Windows stand-ins for the Secret Service (`secrets.rs`) and the libsoup
   HTTP client used by the plugin store.
 
-None of this is done, and no source file was changed. If you only want to run
-opensidian on Windows, use WSL2 with WSLg and follow "Build from source" above.
+None of this is done, and no source file was changed.
+
+**Decided 2026-11-04: not pursuing a native Windows port.** A closer look
+file by file splits the work into two small, mechanical pieces and two large
+ones that are a security redesign, not a syntax change:
+
+- Small: gating `landlock` off (it is already opt-in and disabled by
+  default) and the handful of `OsStrExt`/`symlink` call sites in
+  `vaultlock.rs`, `cfgstore.rs`, `canvasfs.rs`, `pasteimg.rs` — hours to days.
+- Large: `desk_proc.rs`/`spawn.rs`/`spawner.rs` reimplement process lifecycle
+  on raw POSIX (`prctl(PR_SET_PDEATHSIG)`, process-group `kill`,
+  `close_range`, a hand-rolled `SIGTERM` handler) with no Windows analogue —
+  Job Objects, `TerminateProcess` and `SetConsoleCtrlHandler` are a different
+  model, not a drop-in. Larger still: `vaultfs.rs`, where every vault file
+  operation goes through the POSIX `*at()` family (`openat`, `fstatat`,
+  `renameat2`, ...) specifically so no symlink can escape the vault
+  (TOCTOU-safe by construction). Windows has no public `openat` equivalent;
+  the nearest option (`FILE_FLAG_OPEN_REPARSE_POINT`) is a weaker guarantee,
+  which is a security decision, not a port.
+
+Rough total: 3-5 weeks for someone fluent in Win32/NT and filesystem
+security, on a fork of someone else's project, where the riskiest pieces
+are exactly the kind of code that fails silently instead of loudly when
+ported in a hurry. WSL2/WSLg already runs the real Linux build, `landlock`
+included, at no cost and with no weakened guarantee. This section stays as
+the record of why; it is not an open task.
 
 ## Nix
 The repo ships a flake (Nix 2.4+). It pins nixpkgs unstable and builds with
